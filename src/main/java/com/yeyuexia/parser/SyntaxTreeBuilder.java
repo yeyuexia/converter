@@ -8,7 +8,7 @@ public class SyntaxTreeBuilder {
 
   private int index;
 
-  public SyntaxNode build(String content) {
+  public synchronized SyntaxNode build(String content) {
     index = 0;
     if (content.startsWith("(")) {
       return buildNode(content);
