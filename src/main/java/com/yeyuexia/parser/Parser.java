@@ -1,114 +1,43 @@
 package com.yeyuexia.parser;
 
-import com.jayway.jsonpath.JsonPath;
+import com.yeyuexia.parser.methods.AssignMethod;
+import com.yeyuexia.parser.methods.ConditionMethod;
+import com.yeyuexia.parser.methods.EqualMethod;
+import com.yeyuexia.parser.methods.FilterMethod;
+import com.yeyuexia.parser.methods.ForEachMethod;
+import com.yeyuexia.parser.methods.LesserThanMethod;
+import com.yeyuexia.parser.methods.MinusMethod;
+import com.yeyuexia.parser.methods.PlusMethod;
+import com.yeyuexia.parser.node.SyntaxLeaf;
+import com.yeyuexia.parser.node.SyntaxNode;
+import com.yeyuexia.parser.node.SyntaxValue;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-public class Parser {
+public abstract class Parser {
 
   private Map<String, ConvertFunction> methods = new HashMap<>();
-
-  private int index = 0;
+  private SyntaxTreeBuilder builder = new SyntaxTreeBuilder();
 
   public Parser() {
-    methods.put("+", (rType, args) -> {
-      switch (rType) {
-        case "int":
-          return source -> args.stream().mapToInt(arg -> (int) (arg.apply(source))).reduce(0, (a, b) -> a + b);
-        case "string":
-          return source -> args.stream().map(arg -> (String) (arg.apply(source))).reduce("", (a, b) -> a + b);
-        default:
-          throw new RuntimeException();
-      }
-    });
-    methods.put("when", (rType, args) -> {
-      Function condition = args.get(0);
-      Function then = args.get(1);
-      Function otherwise = args.get(2);
-      return source -> {
-        if ((boolean) condition.apply(source)) {
-          return then.apply(source);
-        } else {
-          return otherwise.apply(source);
-        }
-      };
-    });
-    methods.put("-", (rType, args) -> {
-      switch (rType) {
-        case "int":
-          return source -> args.stream().mapToInt(arg -> (int) (arg.apply(source))).reduce(0, (a, b) -> a - b);
-        case "number":
-          return source -> args.stream()
-              .mapToDouble(arg -> (double) (arg.apply(source))).reduce((a, b) -> a - b)
-              .orElseThrow(() -> new RuntimeException());
-        default:
-          throw new RuntimeException();
-      }
-    });
-    methods.put(">", (rType, args) -> lessThan(args.get(0), args.get(1)));
-    methods.put("=", (rType, args) -> args.get(0));
+    Stream.of(new AssignMethod(), new ConditionMethod(), new LesserThanMethod(), new MinusMethod(), new PlusMethod(),
+        new EqualMethod(), new FilterMethod(), new ForEachMethod())
+        .forEach(method -> methods.put(method.getKeyword(), method));
   }
 
-  public Function<String, Boolean> lessThan(Function a, Function b) {
-    return source -> {
-      Object applyA = a.apply(source);
-      Object applyB = b.apply(source);
-      if (!(applyA instanceof Comparable && applyB instanceof Comparable)) {
-        throw new RuntimeException();
-      }
-      return ((Comparable)applyA).compareTo(applyB) < 0;
-    };
-  }
+  protected abstract Object unwrapValue(String source, String expression);
 
   public Function<String, ?> read(String type, String content) {
-    SyntaxNode root;
-    if (content.charAt(index) == '(') {
-      index += 1;
-      root = buildNode(content);
-      return parserFunction(type, root);
-    } else {
-      return wrapperValue(new SyntaxValue(content));
-    }
+    SyntaxNode root = builder.build(content);
+    return parseTree(type, root);
   }
 
-  private SyntaxLeaf buildNode(String content) {
-    int endIndex = content.substring(index).indexOf(' ') + index;
-    String methodName = content.substring(index, endIndex);
-    SyntaxLeaf node = new SyntaxLeaf(methodName);
-    index = endIndex + 1;
-
-    while (content.charAt(index) != ')') {
-      switch (content.charAt(index)) {
-        case '(':
-          index += 1;
-          node.getArgs().add(buildNode(content));
-          break;
-        case ' ':
-          index += 1;
-          break;
-        default:
-          int i = content.substring(index).indexOf(' ');
-          int i2 = content.substring(index).indexOf(')');
-          if (i == -1 || i > i2) {
-            endIndex = i2 + index;
-            node.getArgs().add(new SyntaxValue(content.substring(index, endIndex)));
-            index = endIndex;
-          } else {
-            endIndex = i + index;
-            node.getArgs().add(new SyntaxValue(content.substring(index, endIndex)));
-            index = endIndex + 1;
-          }
-      }
-    }
-    index += 1;
-    return node;
-  }
-
-  private Function parserFunction(String type, SyntaxNode node) {
+  private Function parseTree(String type, SyntaxNode node) {
     if (node instanceof SyntaxValue) {
-      return wrapperValue((SyntaxValue) node);
+      return wrapValue((SyntaxValue) node);
     }
     if (node instanceof SyntaxLeaf) {
       SyntaxLeaf leaf = (SyntaxLeaf) node;
@@ -116,11 +45,9 @@ public class Parser {
           .stream()
           .map(arg -> {
             if (arg instanceof SyntaxValue) {
-              return wrapperValue((SyntaxValue) arg);
-            } else if (arg instanceof SyntaxLeaf) {
-              return parserFunction(type, arg);
+              return wrapValue((SyntaxValue) arg);
             } else {
-              throw new RuntimeException();
+              return parseTree(type, arg);
             }
           }).collect(Collectors.toList()));
     } else {
@@ -128,8 +55,21 @@ public class Parser {
     }
   }
 
-  private Function<String, Object> wrapperValue(SyntaxValue value) {
-    return source -> JsonPath.read(source, value.getValue());
+  private Function<Object, Object> wrapValue(SyntaxValue value) {
+    return source -> value.isConstant() ? value.getValue() : unwrap(source, value.getValue());
   }
 
+  private Object unwrap(Object source, String expression) {
+    if (source instanceof String) {
+      return unwrapValue((String) source, expression);
+    } else if (source instanceof Map) {
+      Map result = (Map) source;
+      String[] split = expression.split("\\.");
+      for (int i = 0; i < split.length - 1; i++) {
+        result = (Map) result.get(split[i]);
+      }
+      return result.get(split[split.length-1]);
+    }
+    return null;
+  }
 }

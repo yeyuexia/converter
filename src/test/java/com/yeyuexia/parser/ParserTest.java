@@ -65,17 +65,17 @@ public class ParserTest {
 
   @Test
   public void should_success_parse_logical() {
-    Parser parser = new Parser();
-    Function<String, ?> function = parser.read("string", "(+ (+ schemaCode master.title master.style) routeCode)");
+    Parser parser = new JsonPathParser();
+    Function<String, ?> function = parser.read("string", "(+ (+ schemaCode master.title master.style \"_ 111\") routeCode)");
     Object result = function.apply(JSON);
 
-    assertEquals("s101T恤（促销款）spu_0001TM618", result);
+    assertEquals("s101T恤（促销款）spu_0001_ 111TM618", result);
   }
 
   @Test
   public void should_success_support_when_operation() {
-    Parser parser = new Parser();
-    Function<String, ?> function = parser.read("string", "(when (> productId tenantCode) routeCode productId))");
+    Parser parser = new JsonPathParser();
+    Function<String, ?> function = parser.read("string", "(if (< productId tenantCode) routeCode productId))");
     Object result = function.apply(JSON);
 
     assertEquals("GAP527813_1_000466996_H105-11304_M03-0003", result);
@@ -83,10 +83,51 @@ public class ParserTest {
 
   @Test
   public void should_success_support_equal_operation() {
-    Parser parser = new Parser();
+    Parser parser = new JsonPathParser();
     Function<String, ?> function = parser.read("string", "(= master))");
     Object result = function.apply(JSON);
 
     assertNotNull(result);
+  }
+
+  @Test
+  public void should_success_support_constant_string() {
+    Parser parser = new JsonPathParser();
+    String content = "\"string value\"";
+
+    Function<String, ?> function = parser.read("string", content);
+    Object result = function.apply(JSON);
+
+    assertEquals(content.substring(1, content.length() - 1), result);
+  }
+
+  @Test
+  public void should_support_simple_loop() {
+    Parser parser = new JsonPathParser();
+
+    Function<String, ?> function = parser.read("string", "(loop master.sizeChart (= high))");
+    Object result = function.apply(JSON);
+
+    assertEquals("[150, 150, 150]", result.toString());
+  }
+
+  @Test
+  public void should_support_loop() {
+    Parser parser = new JsonPathParser();
+
+    Function<String, ?> function = parser.read("string", "(loop variants (= detail.size))");
+    Object result = function.apply(JSON);
+
+    assertEquals("[L, L]", result.toString());
+  }
+
+  @Test
+  public void should_support_condition_loop() {
+    Parser parser = new JsonPathParser();
+
+    Function<String, ?> function = parser.read("string", "(filter master.sizeChart (== weight 120) (= high))");
+    Object result = function.apply(JSON);
+
+    assertEquals("[150]", result.toString());
   }
 }

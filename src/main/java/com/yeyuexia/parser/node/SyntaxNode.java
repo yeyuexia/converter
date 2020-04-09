@@ -1,4 +1,4 @@
-package com.yeyuexia.parser;
+package com.yeyuexia.parser.node;
 
 public interface SyntaxNode {
 
